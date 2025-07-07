@@ -82,7 +82,7 @@ sudo systemctl status slick-nat-daemon
 
 ## Configuration
 
-The daemon configuration is in `/etc/slnatd/config`.
+The daemon configuration is in `/etc/slnatcd/config`.
 
 ### Configuration Format
 
@@ -102,7 +102,7 @@ proc_path /proc/net/slick_nat_mappings
 
 ```bash
 # Edit the configuration file
-sudo nano /etc/slnatd/config
+sudo nano /etc/slnatcd/config
 
 # Add your listening addresses
 listen ::1 7001

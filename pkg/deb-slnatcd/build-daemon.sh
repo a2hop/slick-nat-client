@@ -104,7 +104,7 @@ gzip -9 "$DAEMON_PKG_DIR/usr/share/man/man8/slick-nat-daemon.8"
 # Set permissions
 chmod 755 "$DAEMON_PKG_DIR/usr/sbin/slick-nat-daemon"
 chmod 644 "$DAEMON_PKG_DIR/lib/systemd/system/slnatcd.service"
-chmod 644 "$DAEMON_PKG_DIR/etc/slnatd/config"
+chmod 644 "$DAEMON_PKG_DIR/etc/slnatcd/config"
 chmod 755 "$DAEMON_PKG_DIR/DEBIAN/postinst"
 chmod 755 "$DAEMON_PKG_DIR/DEBIAN/prerm"
 

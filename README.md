@@ -122,7 +122,7 @@ sudo make -f Makefile.clientd install
 
 ### Daemon Configuration
 
-Edit `/etc/slnatd/config`:
+Edit `/etc/slnatcd/config`:
 
 ```bash
 # Listen on localhost
@@ -334,7 +334,7 @@ sudo journalctl -u slnatcd -f
 slnatc ::1 ping
 
 # Check configuration
-sudo cat /etc/slnatd/config
+sudo cat /etc/slnatcd/config
 
 # Check if kernel module is loaded
 cat /proc/net/slick_nat_mappings

@@ -265,7 +265,7 @@ else
     print_warning "  Client not built"
 fi
 if [ -f "build/slick-nat-daemon" ]; then
-    print_info "  Daemon: ./build/slick-nat-daemon --config /etc/slnatd/config"
+    print_info "  Daemon: ./build/slick-nat-daemon --config /etc/slnatcd/config"
 else
     print_warning "  Daemon not built"
 fi

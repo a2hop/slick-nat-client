@@ -209,7 +209,7 @@ jobs:
           echo "### Daemon Package Contents" >> $GITHUB_STEP_SUMMARY
           echo "- Binary: /usr/sbin/slick-nat-daemon" >> $GITHUB_STEP_SUMMARY
           echo "- Service: /lib/systemd/system/slnatcd.service" >> $GITHUB_STEP_SUMMARY
-          echo "- Config: /etc/slnatd/config" >> $GITHUB_STEP_SUMMARY
+          echo "- Config: /etc/slnatcd/config" >> $GITHUB_STEP_SUMMARY
           echo "- Documentation: /usr/share/doc/slick-nat-daemon/" >> $GITHUB_STEP_SUMMARY
           echo "- Man page: /usr/share/man/man8/slick-nat-daemon.8" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -225,7 +225,7 @@ jobs:
           echo "sudo apt-get install -f  # Fix any dependency issues" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Configure and start daemon" >> $GITHUB_STEP_SUMMARY
-          echo "sudo nano /etc/slnatd/config" >> $GITHUB_STEP_SUMMARY
+          echo "sudo nano /etc/slnatcd/config" >> $GITHUB_STEP_SUMMARY
           echo "sudo systemctl start slnatcd" >> $GITHUB_STEP_SUMMARY
           echo "sudo systemctl enable slnatcd" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
