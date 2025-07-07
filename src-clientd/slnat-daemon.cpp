@@ -18,6 +18,13 @@
 
 using json = nlohmann::json;
 
+enum class LogLevel {
+    ERROR = 0,
+    WARNING = 1,
+    INFO = 2,
+    DEBUG = 3
+};
+
 struct ListenConfig {
     std::string address;
     int port;
@@ -34,6 +41,10 @@ private:
     std::string proc_mappings_path;
     std::string config_file_path;
     
+    size_t last_mapping_count;
+    bool proc_file_warning_shown;
+    LogLevel log_level;
+    
     struct NatMapping {
         std::string interface;
         std::string internal_prefix;
@@ -44,9 +55,10 @@ private:
     std::vector<NatMapping> mappings;
     
 public:
-    SlickNatDaemon(const std::string& config_path = "/etc/slnatd/config",
+    SlickNatDaemon(const std::string& config_path = "/etc/slnatcd/config",
                    const std::string& proc_path = "/proc/net/slick_nat_mappings")
-        : running(false), proc_mappings_path(proc_path), config_file_path(config_path) {}
+        : running(false), proc_mappings_path(proc_path), config_file_path(config_path),
+          last_mapping_count(0), proc_file_warning_shown(false), log_level(LogLevel::INFO) {}
     
     ~SlickNatDaemon() {
         stop();
@@ -55,10 +67,9 @@ public:
     bool load_config() {
         std::ifstream config_file(config_file_path);
         if (!config_file.is_open()) {
-            std::cerr << "Warning: Cannot open config file " << config_file_path << std::endl;
-            std::cerr << "Using default configuration" << std::endl;
+            log_warning("Cannot open config file " + config_file_path);
+            log_info("Using default configuration");
             
-            // Default configuration
             ListenConfig default_config;
             default_config.address = "::1";
             default_config.port = 7001;
@@ -74,12 +85,10 @@ public:
         while (std::getline(config_file, line)) {
             line_number++;
             
-            // Skip empty lines and comments
             if (line.empty() || line[0] == '#') {
                 continue;
             }
             
-            // Parse listen directive: listen <address> <port>
             std::istringstream iss(line);
             std::string directive;
             iss >> directive;
@@ -94,23 +103,29 @@ public:
                     config.port = port;
                     config.socket_fd = -1;
                     listen_configs.push_back(config);
-                    std::cout << "Config: Will listen on [" << address << "]:" << port << std::endl;
+                    log_info("Config: Will listen on [" + address + "]:" + std::to_string(port));
                 } else {
-                    std::cerr << "Error parsing config line " << line_number << ": " << line << std::endl;
+                    log_error("Error parsing config line " + std::to_string(line_number) + ": " + line);
                 }
             } else if (directive == "proc_path") {
                 std::string path;
                 if (iss >> path) {
                     proc_mappings_path = path;
-                    std::cout << "Config: Using proc path: " << path << std::endl;
+                    log_info("Config: Using proc path: " + path);
+                }
+            } else if (directive == "log_level") {
+                std::string level_str;
+                if (iss >> level_str) {
+                    log_level = parse_log_level(level_str);
+                    log_info("Config: Log level set to " + level_str);
                 }
             } else {
-                std::cerr << "Unknown config directive on line " << line_number << ": " << directive << std::endl;
+                log_warning("Unknown config directive on line " + std::to_string(line_number) + ": " + directive);
             }
         }
         
         if (listen_configs.empty()) {
-            std::cerr << "No valid listen configurations found, using default" << std::endl;
+            log_warning("No valid listen configurations found, using default");
             ListenConfig default_config;
             default_config.address = "::1";
             default_config.port = 7001;
@@ -126,32 +141,27 @@ public:
             return false;
         }
         
-        // Create sockets for all listen configurations
         for (auto& config : listen_configs) {
             if (!create_listen_socket(config)) {
-                std::cerr << "Failed to create socket for [" << config.address << "]:" << config.port << std::endl;
+                log_error("Failed to create socket for [" + config.address + "]:" + std::to_string(config.port));
                 stop();
                 return false;
             }
         }
         
         running = true;
-        std::cout << "SlickNat daemon started, listening on " << listen_configs.size() << " addresses" << std::endl;
+        log_info("SlickNat daemon started, listening on " + std::to_string(listen_configs.size()) + " addresses");
         
-        // Load initial mappings
         reload_mappings();
         
-        // Start mapping reload thread
         std::thread reload_thread(&SlickNatDaemon::mapping_reload_loop, this);
         reload_thread.detach();
         
-        // Start accept threads for each listening socket
         std::vector<std::thread> accept_threads;
         for (auto& config : listen_configs) {
             accept_threads.emplace_back(&SlickNatDaemon::accept_loop, this, std::ref(config));
         }
         
-        // Wait for all accept threads to complete
         for (auto& thread : accept_threads) {
             thread.join();
         }
@@ -167,30 +177,62 @@ public:
                 config.socket_fd = -1;
             }
         }
-        std::cout << "SlickNat daemon stopped" << std::endl;
+        log_info("SlickNat daemon stopped");
     }
     
 private:
+    void log(LogLevel level, const std::string& message) {
+        if (level <= log_level) {
+            const char* level_str;
+            switch (level) {
+                case LogLevel::ERROR:   level_str = "ERROR"; break;
+                case LogLevel::WARNING: level_str = "WARN"; break;
+                case LogLevel::INFO:    level_str = "INFO"; break;
+                case LogLevel::DEBUG:   level_str = "DEBUG"; break;
+            }
+            
+            if (level == LogLevel::ERROR || level == LogLevel::WARNING) {
+                std::cerr << "[" << level_str << "] " << message << std::endl;
+            } else {
+                std::cout << "[" << level_str << "] " << message << std::endl;
+            }
+        }
+    }
+    
+    void log_error(const std::string& message) { log(LogLevel::ERROR, message); }
+    void log_warning(const std::string& message) { log(LogLevel::WARNING, message); }
+    void log_info(const std::string& message) { log(LogLevel::INFO, message); }
+    void log_debug(const std::string& message) { log(LogLevel::DEBUG, message); }
+    
+    LogLevel parse_log_level(const std::string& level_str) {
+        std::string lower_level = level_str;
+        std::transform(lower_level.begin(), lower_level.end(), lower_level.begin(), ::tolower);
+        
+        if (lower_level == "error") return LogLevel::ERROR;
+        if (lower_level == "warning" || lower_level == "warn") return LogLevel::WARNING;
+        if (lower_level == "info") return LogLevel::INFO;
+        if (lower_level == "debug") return LogLevel::DEBUG;
+        
+        return LogLevel::INFO;
+    }
+    
     bool create_listen_socket(ListenConfig& config) {
-        // Create IPv6 TCP socket
         config.socket_fd = socket(AF_INET6, SOCK_STREAM, 0);
         if (config.socket_fd == -1) {
-            std::cerr << "Failed to create socket for " << config.address << std::endl;
+            log_error("Failed to create socket for " + config.address);
             return false;
         }
         
-        // Enable IPv6 only (disable IPv4-mapped IPv6 addresses)
         int ipv6only = 1;
         if (setsockopt(config.socket_fd, IPPROTO_IPV6, IPV6_V6ONLY, &ipv6only, sizeof(ipv6only)) == -1) {
-            std::cerr << "Failed to set IPv6 only for " << config.address << std::endl;
+            log_error("Failed to set IPv6 only for " + config.address);
             close(config.socket_fd);
             return false;
         }
         
-        // Enable address reuse
         int reuse = 1;
         if (setsockopt(config.socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
-            std::cerr << "Failed to set socket reuse for " << config.address << std::endl;
+            log_error("Failed to set socket reuse for " + config.address);
             close(config.socket_fd);
             return false;
         }
@@ -201,24 +243,24 @@ private:
         addr.sin6_port = htons(config.port);
         
         if (inet_pton(AF_INET6, config.address.c_str(), &addr.sin6_addr) != 1) {
-            std::cerr << "Invalid IPv6 address: " << config.address << std::endl;
+            log_error("Invalid IPv6 address: " + config.address);
             close(config.socket_fd);
             return false;
         }
         
         if (bind(config.socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-            std::cerr << "Failed to bind to " << config.address << ":" << config.port << std::endl;
+            log_error("Failed to bind to " + config.address + ":" + std::to_string(config.port));
             close(config.socket_fd);
             return false;
         }
         
         if (listen(config.socket_fd, 5) == -1) {
-            std::cerr << "Failed to listen on " << config.address << ":" << config.port << std::endl;
+            log_error("Failed to listen on " + config.address + ":" + std::to_string(config.port));
             close(config.socket_fd);
             return false;
         }
         
-        std::cout << "Listening on [" << config.address << "]:" << config.port << std::endl;
+        log_info("Listening on [" + config.address + "]:" + std::to_string(config.port));
         return true;
     }
     
@@ -230,16 +272,16 @@ private:
             
             if (client_socket == -1) {
                 if (running) {
-                    std::cerr << "Accept failed on " << config.address << ":" << config.port << std::endl;
+                    log_error("Accept failed on " + config.address + ":" + std::to_string(config.port));
                 }
                 continue;
             }
             
-            // Log client connection
             char client_ip[INET6_ADDRSTRLEN];
             if (inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, sizeof(client_ip))) {
-                std::cout << "Client connected from [" << client_ip << "]:" << ntohs(client_addr.sin6_port) 
-                          << " to [" << config.address << "]:" << config.port << std::endl;
+                log_debug("Client connected from [" + std::string(client_ip) + "]:" + 
+                         std::to_string(ntohs(client_addr.sin6_port)) + " to [" + config.address + "]:" + 
+                         std::to_string(config.port));
             }
             
             std::thread client_thread(&SlickNatDaemon::handle_client, this, client_socket);
@@ -259,8 +301,16 @@ private:
     bool reload_mappings() {
         std::ifstream proc_file(proc_mappings_path);
         if (!proc_file.is_open()) {
-            std::cerr << "Warning: Cannot open " << proc_mappings_path << std::endl;
+            if (!proc_file_warning_shown) {
+                log_warning("Cannot open " + proc_mappings_path);
+                proc_file_warning_shown = true;
+            }
             return false;
+        }
+        
+        if (proc_file_warning_shown) {
+            log_info("Successfully reopened " + proc_mappings_path);
+            proc_file_warning_shown = false;
         }
         
         std::lock_guard<std::mutex> lock(mappings_mutex);
@@ -272,7 +322,6 @@ private:
         std::regex mapping_regex(R"(^(\S+)\s+([a-fA-F0-9:]+)/(\d+)\s+->\s+([a-fA-F0-9:]+)/(\d+)$)");
         
         while (std::getline(proc_file, line)) {
-            // Skip comments and empty lines
             if (line.empty() || line[0] == '#') {
                 continue;
             }
@@ -287,18 +336,19 @@ private:
                 
                 mappings.push_back(mapping);
                 
-                // Build lookup maps for prefix matching
                 build_lookup_maps(mapping);
             }
         }
         
-        std::cout << "Loaded " << mappings.size() << " NAT mappings" << std::endl;
+        if (mappings.size() != last_mapping_count) {
+            log_info("Loaded " + std::to_string(mappings.size()) + " NAT mappings");
+            last_mapping_count = mappings.size();
+        }
+        
         return true;
     }
     
     void build_lookup_maps(const NatMapping& mapping) {
-        // For simplicity, we'll store the prefix mappings directly
-        // In a real implementation, you'd want more sophisticated IP prefix matching
         std::string internal_key = mapping.internal_prefix + "/" + std::to_string(mapping.prefix_len);
         std::string external_key = mapping.external_prefix + "/" + std::to_string(mapping.prefix_len);
         
@@ -362,7 +412,6 @@ private:
         
         std::lock_guard<std::mutex> lock(mappings_mutex);
         
-        // Find matching mapping by checking if IP matches any internal prefix
         for (const auto& mapping : mappings) {
             if (ip_matches_prefix(ip, mapping.internal_prefix, mapping.prefix_len)) {
                 std::string public_ip = remap_address(ip, mapping.internal_prefix, 
@@ -376,7 +425,6 @@ private:
             }
         }
         
-        // Check if it's already an external IP
         for (const auto& mapping : mappings) {
             if (ip_matches_prefix(ip, mapping.external_prefix, mapping.prefix_len)) {
                 std::string internal_ip = remap_address(ip, mapping.external_prefix, 
@@ -404,29 +452,21 @@ private:
         
         std::lock_guard<std::mutex> lock(mappings_mutex);
         
-        std::cout << "Looking for global IP mapping for: " << ip << std::endl;
-        std::cout << "Available mappings:" << std::endl;
-        for (const auto& mapping : mappings) {
-            std::cout << "  " << mapping.interface << " " << mapping.internal_prefix 
-                      << "/" << mapping.prefix_len << " -> " << mapping.external_prefix 
-                      << "/" << mapping.prefix_len << std::endl;
-        }
+        log_debug("Looking for global IP mapping for: " + ip);
         
-        // Find matching mapping and return the external (global) IP
         for (const auto& mapping : mappings) {
-            std::cout << "Checking if " << ip << " matches prefix " << mapping.internal_prefix 
-                      << "/" << mapping.prefix_len << std::endl;
+            log_debug("Checking if " + ip + " matches prefix " + mapping.internal_prefix + 
+                     "/" + std::to_string(mapping.prefix_len));
             
             if (ip_matches_prefix(ip, mapping.internal_prefix, mapping.prefix_len)) {
                 std::string global_ip = remap_address(ip, mapping.internal_prefix, 
                                                      mapping.external_prefix, mapping.prefix_len);
                 
-                std::cout << "Found match! Mapped to: " << global_ip << std::endl;
+                log_debug("Found match! Mapped to: " + global_ip);
                 
-                // Check if the result is in 2000::/3 (global unicast range)
                 struct in6_addr addr;
                 if (inet_pton(AF_INET6, global_ip.c_str(), &addr) == 1) {
-                    if ((addr.s6_addr[0] & 0xE0) == 0x20) {  // 2000::/3 check
+                    if ((addr.s6_addr[0] & 0xE0) == 0x20) {
                         return {
                             {"internal_ip", ip},
                             {"global_ip", global_ip},
@@ -434,10 +474,10 @@ private:
                             {"status", "success"}
                         };
                     } else {
-                        std::cout << "Mapped IP " << global_ip << " is not in global unicast range (2000::/3)" << std::endl;
+                        log_debug("Mapped IP " + global_ip + " is not in global unicast range (2000::/3)");
                     }
                 } else {
-                    std::cout << "Failed to parse mapped IP: " << global_ip << std::endl;
+                    log_debug("Failed to parse mapped IP: " + global_ip);
                 }
             }
         }
@@ -463,18 +503,15 @@ private:
             return false;
         }
         
-        // Compare prefix bits
         int bytes = prefix_len / 8;
         int bits = prefix_len % 8;
         
-        // Compare full bytes
         for (int i = 0; i < bytes; i++) {
             if (ip_addr.s6_addr[i] != prefix_addr.s6_addr[i]) {
                 return false;
             }
         }
         
-        // Compare remaining bits
         if (bits > 0 && bytes < 16) {
             uint8_t mask = (0xFF << (8 - bits)) & 0xFF;
             if ((ip_addr.s6_addr[bytes] & mask) != (prefix_addr.s6_addr[bytes] & mask)) {
@@ -492,36 +529,31 @@ private:
         if (inet_pton(AF_INET6, ip.c_str(), &ip_addr) != 1 ||
             inet_pton(AF_INET6, old_prefix.c_str(), &old_prefix_addr) != 1 ||
             inet_pton(AF_INET6, new_prefix.c_str(), &new_prefix_addr) != 1) {
-            return ip; // Return original if parsing fails
+            return ip;
         }
         
-        // Replace prefix bits
         int bytes = prefix_len / 8;
         int bits = prefix_len % 8;
         
-        // Replace full bytes
         for (int i = 0; i < bytes && i < 16; i++) {
             ip_addr.s6_addr[i] = new_prefix_addr.s6_addr[i];
         }
         
-        // Replace remaining bits
         if (bits > 0 && bytes < 16) {
             uint8_t mask = (0xFF << (8 - bits)) & 0xFF;
             ip_addr.s6_addr[bytes] = (new_prefix_addr.s6_addr[bytes] & mask) | 
                                     (ip_addr.s6_addr[bytes] & ~mask);
         }
         
-        // Convert back to string
         char result[INET6_ADDRSTRLEN];
         if (inet_ntop(AF_INET6, &ip_addr, result, sizeof(result))) {
             return std::string(result);
         }
         
-        return ip; // Return original if conversion fails
+        return ip;
     }
 };
 
-// Global daemon instance for signal handling
 SlickNatDaemon* g_daemon = nullptr;
 
 void signal_handler(int signum) {
@@ -533,10 +565,9 @@ void signal_handler(int signum) {
 }
 
 int main(int argc, char* argv[]) {
-    std::string config_path = "/etc/slnatd/config";
+    std::string config_path = "/etc/slnatcd/config";
     std::string proc_path = "/proc/net/slick_nat_mappings";
     
-    // Parse command line arguments
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--config" && i + 1 < argc) {
@@ -545,8 +576,12 @@ int main(int argc, char* argv[]) {
             proc_path = argv[++i];
         } else if (arg == "--help") {
             std::cout << "Usage: " << argv[0] << " [--config PATH] [--proc PATH]\n";
-            std::cout << "  --config PATH   Configuration file path (default: /etc/slnatd/config)\n";
+            std::cout << "  --config PATH   Configuration file path (default: /etc/slnatcd/config)\n";
             std::cout << "  --proc PATH     Kernel proc file path (default: /proc/net/slick_nat_mappings)\n";
+            std::cout << "\nConfig file options:\n";
+            std::cout << "  listen <address> <port>   Listen on specified address and port\n";
+            std::cout << "  proc_path <path>          Set kernel proc file path\n";
+            std::cout << "  log_level <level>         Set log level (error, warning, info, debug)\n";
             return 0;
         }
     }
@@ -554,7 +589,6 @@ int main(int argc, char* argv[]) {
     SlickNatDaemon daemon(config_path, proc_path);
     g_daemon = &daemon;
     
-    // Setup signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     

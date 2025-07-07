@@ -32,7 +32,7 @@ mkdir -p "$DAEMON_PKG_DIR/usr/sbin"
 mkdir -p "$DAEMON_PKG_DIR/lib/systemd/system"
 mkdir -p "$DAEMON_PKG_DIR/usr/share/man/man8"
 mkdir -p "$DAEMON_PKG_DIR/usr/share/doc/slick-nat-daemon"
-mkdir -p "$DAEMON_PKG_DIR/etc/slnatd"
+mkdir -p "$DAEMON_PKG_DIR/etc/slnatcd"
 
 # Copy daemon files
 cp build/slick-nat-daemon "$DAEMON_PKG_DIR/usr/sbin/"
@@ -42,7 +42,7 @@ cp pkg/deb-slnatcd/control "$DAEMON_PKG_DIR/DEBIAN/"
 cp pkg/deb-slnatcd/res/slnatcd.service "$DAEMON_PKG_DIR/lib/systemd/system/"
 
 # Copy default config file
-cp pkg/deb-slnatcd/res/etc-slnatd "$DAEMON_PKG_DIR/etc/slnatd/config"
+cp pkg/deb-slnatcd/res/etc-slnatd "$DAEMON_PKG_DIR/etc/slnatcd/config"
 
 # Copy man page for daemon
 cp pkg/deb-slnatcd/res/slick-nat-clientd.8 "$DAEMON_PKG_DIR/usr/share/man/man8/slick-nat-daemon.8"
@@ -57,7 +57,7 @@ IPv6 NAT mapping information by reading kernel SlickNat module
 data and serving it over a JSON API.
 
 Configuration:
-  Edit /etc/slnatd/config to configure listening addresses.
+  Edit /etc/slnatcd/config to configure listening addresses.
 
 Service Management:
   sudo systemctl start slnatcd
@@ -81,7 +81,7 @@ systemctl enable slnatcd || true
 systemctl start slnatcd || true
 
 echo "SlickNat daemon installed and started."
-echo "Configure listening addresses in /etc/slnatd/config"
+echo "Configure listening addresses in /etc/slnatcd/config"
 echo "Then restart with: sudo systemctl restart slnatcd"
 EOF
 
@@ -132,5 +132,5 @@ echo "To install:"
 echo "  sudo dpkg -i $OUTPUT_DIR/slick-nat-daemon.deb"
 echo ""
 echo "To configure:"
-echo "  sudo nano /etc/slnatd/config"
+echo "  sudo nano /etc/slnatcd/config"
 echo "  sudo systemctl restart slnatcd"
