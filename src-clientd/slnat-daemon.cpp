@@ -94,10 +94,16 @@ public:
             iss >> directive;
             
             if (directive == "listen") {
+                std::string address_port_str;
+                std::getline(iss, address_port_str);
+                
+                // Trim leading whitespace
+                address_port_str.erase(0, address_port_str.find_first_not_of(" \t"));
+                
                 std::string address;
                 int port;
                 
-                if (iss >> address >> port) {
+                if (parse_address_port(address_port_str, address, port)) {
                     ListenConfig config;
                     config.address = address;
                     config.port = port;
@@ -216,10 +222,60 @@ private:
         return LogLevel::INFO;
     }
     
+    bool parse_address_port(const std::string& address_port_str, std::string& address, int& port) {
+        // Handle bracketed IPv6 addresses: [::1]:7001
+        if (address_port_str[0] == '[') {
+            size_t close_bracket = address_port_str.find(']');
+            if (close_bracket == std::string::npos) {
+                return false;
+            }
+            
+            address = address_port_str.substr(1, close_bracket - 1);
+            
+            // Look for port after the closing bracket
+            size_t colon_pos = address_port_str.find(':', close_bracket);
+            if (colon_pos != std::string::npos) {
+                try {
+                    port = std::stoi(address_port_str.substr(colon_pos + 1));
+                } catch (const std::exception&) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            // Handle space-separated format: ::1 7001
+            std::istringstream iss(address_port_str);
+            std::string port_str;
+            
+            if (iss >> address >> port_str) {
+                try {
+                    port = std::stoi(port_str);
+                } catch (const std::exception&) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        
+        // Validate IPv6 address
+        if (!is_valid_ipv6(address)) {
+            return false;
+        }
+        
+        // Validate port range
+        if (port < 1 || port > 65535) {
+            return false;
+        }
+        
+        return true;
+    }
+    
     bool create_listen_socket(ListenConfig& config) {
         config.socket_fd = socket(AF_INET6, SOCK_STREAM, 0);
         if (config.socket_fd == -1) {
-            log_error("Failed to create socket for " + config.address);
+            log_error("Failed to create IPv6 socket for " + config.address);
             return false;
         }
         
@@ -249,13 +305,13 @@ private:
         }
         
         if (bind(config.socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-            log_error("Failed to bind to " + config.address + ":" + std::to_string(config.port));
+            log_error("Failed to bind to [" + config.address + "]:" + std::to_string(config.port));
             close(config.socket_fd);
             return false;
         }
         
         if (listen(config.socket_fd, 5) == -1) {
-            log_error("Failed to listen on " + config.address + ":" + std::to_string(config.port));
+            log_error("Failed to listen on [" + config.address + "]:" + std::to_string(config.port));
             close(config.socket_fd);
             return false;
         }
