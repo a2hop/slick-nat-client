@@ -8,6 +8,7 @@
 #include <regex>
 #include <chrono>
 #include <sstream>
+#include <algorithm>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <signal.h>
@@ -67,20 +68,40 @@ public:
     bool load_config() {
         std::ifstream config_file(config_file_path);
         if (!config_file.is_open()) {
-            log_warning("Cannot open config file " + config_file_path);
-            log_info("Using default configuration");
-            
-            ListenConfig default_config;
-            default_config.address = "::1";
-            default_config.port = 7001;
-            default_config.socket_fd = -1;
-            listen_configs.push_back(default_config);
-            return true;
+            log_error("Cannot open config file " + config_file_path);
+            return false;
         }
         
         listen_configs.clear();
         std::string line;
         int line_number = 0;
+        
+        // First pass: check for log_level directive
+        while (std::getline(config_file, line)) {
+            line_number++;
+            
+            if (line.empty() || line[0] == '#') {
+                continue;
+            }
+            
+            std::istringstream iss(line);
+            std::string directive;
+            iss >> directive;
+            
+            if (directive == "log_level") {
+                std::string level_str;
+                if (iss >> level_str) {
+                    log_level = parse_log_level(level_str);
+                    log_info("Config: Log level set to " + level_str);
+                    break;
+                }
+            }
+        }
+        
+        // Reset file position for second pass
+        config_file.clear();
+        config_file.seekg(0);
+        line_number = 0;
         
         while (std::getline(config_file, line)) {
             line_number++;
@@ -100,9 +121,6 @@ public:
                 // Trim leading whitespace
                 address_port_str.erase(0, address_port_str.find_first_not_of(" \t"));
                 
-                log_debug("Processing listen directive, line " + std::to_string(line_number) + ": '" + line + "'");
-                log_debug("Address/port string: '" + address_port_str + "'");
-                
                 std::string address;
                 int port;
                 
@@ -115,7 +133,7 @@ public:
                     log_info("Config: Will listen on [" + address + "]:" + std::to_string(port));
                 } else {
                     log_error("Error parsing config line " + std::to_string(line_number) + ": " + line);
-                    log_error("Failed to parse address/port from: '" + address_port_str + "'");
+                    return false;
                 }
             } else if (directive == "proc_path") {
                 std::string path;
@@ -124,23 +142,16 @@ public:
                     log_info("Config: Using proc path: " + path);
                 }
             } else if (directive == "log_level") {
-                std::string level_str;
-                if (iss >> level_str) {
-                    log_level = parse_log_level(level_str);
-                    log_info("Config: Log level set to " + level_str);
-                }
+                // Already processed in first pass
+                continue;
             } else {
                 log_warning("Unknown config directive on line " + std::to_string(line_number) + ": " + directive);
             }
         }
         
         if (listen_configs.empty()) {
-            log_warning("No valid listen configurations found, using default");
-            ListenConfig default_config;
-            default_config.address = "::1";
-            default_config.port = 7001;
-            default_config.socket_fd = -1;
-            listen_configs.push_back(default_config);
+            log_error("No valid listen configurations found in config file");
+            return false;
         }
         
         return true;
@@ -193,7 +204,7 @@ public:
 private:
     void log(LogLevel level, const std::string& message) {
         if (level <= log_level) {
-            const char* level_str;
+            const char* level_str = "UNKNOWN";
             switch (level) {
                 case LogLevel::ERROR:   level_str = "ERROR"; break;
                 case LogLevel::WARNING: level_str = "WARN"; break;
@@ -227,13 +238,10 @@ private:
     }
     
     bool parse_address_port(const std::string& address_port_str, std::string& address, int& port) {
-        log_debug("Parsing address_port_str: '" + address_port_str + "'");
-        
         // Handle bracketed IPv6 addresses: [::1]:7001
         if (!address_port_str.empty() && address_port_str[0] == '[') {
             size_t close_bracket = address_port_str.find(']');
             if (close_bracket == std::string::npos) {
-                log_debug("No closing bracket found");
                 return false;
             }
             
@@ -244,12 +252,10 @@ private:
             if (colon_pos != std::string::npos) {
                 try {
                     port = std::stoi(address_port_str.substr(colon_pos + 1));
-                } catch (const std::exception& e) {
-                    log_debug("Failed to parse port: " + std::string(e.what()));
+                } catch (const std::exception&) {
                     return false;
                 }
             } else {
-                log_debug("No port found after closing bracket");
                 return false;
             }
         } else {
@@ -260,31 +266,24 @@ private:
             if (iss >> address >> port_str) {
                 try {
                     port = std::stoi(port_str);
-                } catch (const std::exception& e) {
-                    log_debug("Failed to parse port '" + port_str + "': " + std::string(e.what()));
+                } catch (const std::exception&) {
                     return false;
                 }
             } else {
-                log_debug("Failed to extract address and port from: '" + address_port_str + "'");
                 return false;
             }
         }
         
-        log_debug("Extracted address: '" + address + "', port: " + std::to_string(port));
-        
         // Validate IPv6 address
         if (!is_valid_ipv6(address)) {
-            log_debug("Invalid IPv6 address: '" + address + "'");
             return false;
         }
         
         // Validate port range
         if (port < 1 || port > 65535) {
-            log_debug("Port out of range: " + std::to_string(port));
             return false;
         }
         
-        log_debug("Successfully parsed address: '" + address + "', port: " + std::to_string(port));
         return true;
     }
     
@@ -351,7 +350,7 @@ private:
             
             char client_ip[INET6_ADDRSTRLEN];
             if (inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, sizeof(client_ip))) {
-                log_debug("Client connected from [" + std::string(client_ip) + "]:" + 
+                log_info("Client connected from [" + std::string(client_ip) + "]:" + 
                          std::to_string(ntohs(client_addr.sin6_port)) + " to [" + config.address + "]:" + 
                          std::to_string(config.port));
             }
@@ -524,17 +523,10 @@ private:
         
         std::lock_guard<std::mutex> lock(mappings_mutex);
         
-        log_debug("Looking for global IP mapping for: " + ip);
-        
         for (const auto& mapping : mappings) {
-            log_debug("Checking if " + ip + " matches prefix " + mapping.internal_prefix + 
-                     "/" + std::to_string(mapping.prefix_len));
-            
             if (ip_matches_prefix(ip, mapping.internal_prefix, mapping.prefix_len)) {
                 std::string global_ip = remap_address(ip, mapping.internal_prefix, 
                                                      mapping.external_prefix, mapping.prefix_len);
-                
-                log_debug("Found match! Mapped to: " + global_ip);
                 
                 struct in6_addr addr;
                 if (inet_pton(AF_INET6, global_ip.c_str(), &addr) == 1) {
@@ -545,11 +537,7 @@ private:
                             {"interface", mapping.interface},
                             {"status", "success"}
                         };
-                    } else {
-                        log_debug("Mapped IP " + global_ip + " is not in global unicast range (2000::/3)");
                     }
-                } else {
-                    log_debug("Failed to parse mapped IP: " + global_ip);
                 }
             }
         }

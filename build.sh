@@ -184,7 +184,7 @@ fi
 
 print_info "Build completed successfully!"
 
-# Show built binaries
+# Show built binarie
 if [ -d "build" ]; then
     print_info "Built binaries:"
     ls -la build/ 2>/dev/null || true

@@ -1,9 +1,10 @@
 # SlickNat Daemon Configuration
 # Listen on multiple IPv6 addresses
+log_level error #  error, war, info, debug
 
 # Listen on localhost
 listen ::1 7001
-log_level error #  error, war, info, debug
+
 
 # Listen on all IPv6 addresses (uncomment if needed)
 # listen :: 7001
