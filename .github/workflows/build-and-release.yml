@@ -17,11 +17,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: Get version
         id: version
         run: |
@@ -50,10 +45,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config libssl-dev
-
-      - name: Download Go dependencies
-        run: go mod download
+          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config curl wget
+          # Install nlohmann-json3-dev for reliable JSON support
+          sudo apt-get install -y nlohmann-json3-dev
 
       - name: Update version in build scripts
         run: |
@@ -222,9 +216,10 @@ jobs:
           echo "- **Client Package**: ${{ steps.version.outputs.client_deb_filename }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Daemon Package**: ${{ steps.version.outputs.daemon_deb_filename }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Architecture**: amd64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Language**: C++17" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Client Package Contents" >> $GITHUB_STEP_SUMMARY
-          echo "- Binary: /usr/local/bin/slnatc" >> $GITHUB_STEP_SUMMARY
+          echo "- Binary: /usr/bin/slnatc" >> $GITHUB_STEP_SUMMARY
           echo "- Documentation: /usr/share/doc/slick-nat-client/" >> $GITHUB_STEP_SUMMARY
           echo "- Man page: /usr/share/man/man1/slnatc.1" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -252,5 +247,6 @@ jobs:
           echo "sudo systemctl enable slnatcd" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# Test client" >> $GITHUB_STEP_SUMMARY
-          echo "slnatc --help" >> $GITHUB_STEP_SUMMARY
+          echo "slnatc ::1 ping" >> $GITHUB_STEP_SUMMARY
+          echo "slnatc ::1 get2kip" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

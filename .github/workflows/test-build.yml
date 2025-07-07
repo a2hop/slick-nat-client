@@ -12,18 +12,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config libssl-dev
-
-      - name: Download Go dependencies
-        run: go mod download
+          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config curl wget
+          # Install nlohmann-json3-dev for reliable JSON support
+          sudo apt-get install -y nlohmann-json3-dev
 
       - name: Test client build
         run: |
@@ -47,10 +41,31 @@ jobs:
           echo "Verifying daemon package..."
           dpkg-deb --info pkg/output/slick-nat-daemon.deb
 
+      - name: Test binaries
+        run: |
+          echo "Testing built binaries..."
+          if [ -f "build/slnatc" ]; then
+            echo "✓ Client binary exists"
+            file build/slnatc
+          else
+            echo "✗ Client binary missing"
+            exit 1
+          fi
+          
+          if [ -f "build/slick-nat-daemon" ]; then
+            echo "✓ Daemon binary exists"
+            file build/slick-nat-daemon
+          else
+            echo "✗ Daemon binary missing"
+            exit 1
+          fi
+
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         with:
           name: test-packages
           path: |
             pkg/output/*.deb
+            build/slnatc
+            build/slick-nat-daemon
           retention-days: 7
