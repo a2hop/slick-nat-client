@@ -100,6 +100,9 @@ public:
                 // Trim leading whitespace
                 address_port_str.erase(0, address_port_str.find_first_not_of(" \t"));
                 
+                log_debug("Processing listen directive, line " + std::to_string(line_number) + ": '" + line + "'");
+                log_debug("Address/port string: '" + address_port_str + "'");
+                
                 std::string address;
                 int port;
                 
@@ -112,6 +115,7 @@ public:
                     log_info("Config: Will listen on [" + address + "]:" + std::to_string(port));
                 } else {
                     log_error("Error parsing config line " + std::to_string(line_number) + ": " + line);
+                    log_error("Failed to parse address/port from: '" + address_port_str + "'");
                 }
             } else if (directive == "proc_path") {
                 std::string path;
@@ -223,10 +227,13 @@ private:
     }
     
     bool parse_address_port(const std::string& address_port_str, std::string& address, int& port) {
+        log_debug("Parsing address_port_str: '" + address_port_str + "'");
+        
         // Handle bracketed IPv6 addresses: [::1]:7001
-        if (address_port_str[0] == '[') {
+        if (!address_port_str.empty() && address_port_str[0] == '[') {
             size_t close_bracket = address_port_str.find(']');
             if (close_bracket == std::string::npos) {
+                log_debug("No closing bracket found");
                 return false;
             }
             
@@ -237,38 +244,47 @@ private:
             if (colon_pos != std::string::npos) {
                 try {
                     port = std::stoi(address_port_str.substr(colon_pos + 1));
-                } catch (const std::exception&) {
+                } catch (const std::exception& e) {
+                    log_debug("Failed to parse port: " + std::string(e.what()));
                     return false;
                 }
             } else {
+                log_debug("No port found after closing bracket");
                 return false;
             }
         } else {
-            // Handle space-separated format: ::1 7001
+            // Handle space-separated format: ::1 7001 or 7000::1 7001
             std::istringstream iss(address_port_str);
             std::string port_str;
             
             if (iss >> address >> port_str) {
                 try {
                     port = std::stoi(port_str);
-                } catch (const std::exception&) {
+                } catch (const std::exception& e) {
+                    log_debug("Failed to parse port '" + port_str + "': " + std::string(e.what()));
                     return false;
                 }
             } else {
+                log_debug("Failed to extract address and port from: '" + address_port_str + "'");
                 return false;
             }
         }
         
+        log_debug("Extracted address: '" + address + "', port: " + std::to_string(port));
+        
         // Validate IPv6 address
         if (!is_valid_ipv6(address)) {
+            log_debug("Invalid IPv6 address: '" + address + "'");
             return false;
         }
         
         // Validate port range
         if (port < 1 || port > 65535) {
+            log_debug("Port out of range: " + std::to_string(port));
             return false;
         }
         
+        log_debug("Successfully parsed address: '" + address + "', port: " + std::to_string(port));
         return true;
     }
     
