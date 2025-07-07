@@ -3,7 +3,7 @@
 log_level error #  error, war, info, debug
 
 # Listen on localhost
-listen ::1 7001
+listen 7888::1 7001
 
 
 # Listen on all IPv6 addresses (uncomment if needed)
