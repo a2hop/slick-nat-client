@@ -87,13 +87,6 @@ jobs:
           dpkg-deb --info ${{ steps.version.outputs.daemon_deb_filename }}
           dpkg-deb --contents ${{ steps.version.outputs.daemon_deb_filename }}
 
-      - name: Generate checksums
-        run: |
-          sha256sum ${{ steps.version.outputs.client_deb_filename }} > ${{ steps.version.outputs.client_deb_filename }}.sha256
-          sha256sum ${{ steps.version.outputs.daemon_deb_filename }} > ${{ steps.version.outputs.daemon_deb_filename }}.sha256
-          md5sum ${{ steps.version.outputs.client_deb_filename }} > ${{ steps.version.outputs.client_deb_filename }}.md5
-          md5sum ${{ steps.version.outputs.daemon_deb_filename }} > ${{ steps.version.outputs.daemon_deb_filename }}.md5
-
       - name: Get latest release
         id: latest_release
         uses: actions/github-script@v6
@@ -134,11 +127,7 @@ jobs:
             
             const assetNames = [
               '${{ steps.version.outputs.client_deb_filename }}',
-              '${{ steps.version.outputs.daemon_deb_filename }}',
-              '${{ steps.version.outputs.client_deb_filename }}.sha256',
-              '${{ steps.version.outputs.daemon_deb_filename }}.sha256',
-              '${{ steps.version.outputs.client_deb_filename }}.md5',
-              '${{ steps.version.outputs.daemon_deb_filename }}.md5'
+              '${{ steps.version.outputs.daemon_deb_filename }}'
             ];
             
             const existingAssets = {};
@@ -178,11 +167,7 @@ jobs:
             
             const assets = [
               { path: './${{ steps.version.outputs.client_deb_filename }}', name: '${{ steps.version.outputs.client_deb_filename }}', contentType: 'application/vnd.debian.binary-package' },
-              { path: './${{ steps.version.outputs.daemon_deb_filename }}', name: '${{ steps.version.outputs.daemon_deb_filename }}', contentType: 'application/vnd.debian.binary-package' },
-              { path: './${{ steps.version.outputs.client_deb_filename }}.sha256', name: '${{ steps.version.outputs.client_deb_filename }}.sha256', contentType: 'text/plain' },
-              { path: './${{ steps.version.outputs.daemon_deb_filename }}.sha256', name: '${{ steps.version.outputs.daemon_deb_filename }}.sha256', contentType: 'text/plain' },
-              { path: './${{ steps.version.outputs.client_deb_filename }}.md5', name: '${{ steps.version.outputs.client_deb_filename }}.md5', contentType: 'text/plain' },
-              { path: './${{ steps.version.outputs.daemon_deb_filename }}.md5', name: '${{ steps.version.outputs.daemon_deb_filename }}.md5', contentType: 'text/plain' }
+              { path: './${{ steps.version.outputs.daemon_deb_filename }}', name: '${{ steps.version.outputs.daemon_deb_filename }}', contentType: 'application/vnd.debian.binary-package' }
             ];
             
             for (const asset of assets) {
@@ -205,8 +190,6 @@ jobs:
           path: |
             ${{ steps.version.outputs.client_deb_filename }}
             ${{ steps.version.outputs.daemon_deb_filename }}
-            *.sha256
-            *.md5
           retention-days: 30
 
       - name: Create release summary
