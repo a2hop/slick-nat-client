@@ -1,0 +1,97 @@
+# SlickNat Client Makefile
+
+CXX = g++
+CXXFLAGS = -std=c++17 -O2 -Wall -Wextra
+LDFLAGS = -pthread
+
+# Try to use system nlohmann/json, fallback to fetching it
+JSON_PKG := $(shell pkg-config --exists nlohmann_json 2>/dev/null && echo "system" || echo "fetch")
+
+ifeq ($(JSON_PKG),system)
+    CXXFLAGS += $(shell pkg-config --cflags nlohmann_json)
+    $(info Using system nlohmann/json)
+else
+    # Create local include directory for nlohmann/json
+    JSON_INCLUDE = third_party/nlohmann
+    CXXFLAGS += -I$(JSON_INCLUDE)
+    $(info Using local nlohmann/json from $(JSON_INCLUDE))
+endif
+
+# Source files
+CLIENT_SRC = src-client/slnatc.cpp
+CLIENT_TARGET = slnatc
+
+# Build directory
+BUILD_DIR = build
+
+.PHONY: all clean install deps check-deps
+
+all: check-deps deps $(BUILD_DIR)/$(CLIENT_TARGET)
+
+check-deps:
+	@echo "Checking build dependencies..."
+	@which g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found. Install with: sudo apt install build-essential"; exit 1; }
+	@which pkg-config >/dev/null 2>&1 || { echo "ERROR: pkg-config not found. Install with: sudo apt install pkg-config"; exit 1; }
+ifneq ($(JSON_PKG),system)
+	@which curl >/dev/null 2>&1 || which wget >/dev/null 2>&1 || { echo "ERROR: curl or wget required for downloading nlohmann/json. Install with: sudo apt install curl"; exit 1; }
+endif
+	@echo "✓ All dependencies available"
+
+deps:
+ifneq ($(JSON_PKG),system)
+	@echo "Setting up nlohmann/json..."
+	@mkdir -p $(JSON_INCLUDE)
+	@if [ ! -f $(JSON_INCLUDE)/json.hpp ]; then \
+		echo "Downloading nlohmann/json header..."; \
+		if command -v curl >/dev/null 2>&1; then \
+			curl -sL https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -o $(JSON_INCLUDE)/json.hpp; \
+		elif command -v wget >/dev/null 2>&1; then \
+			wget -q https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -O $(JSON_INCLUDE)/json.hpp; \
+		else \
+			echo "ERROR: Neither curl nor wget found. Please install one of them."; \
+			exit 1; \
+		fi; \
+		if [ ! -f $(JSON_INCLUDE)/json.hpp ]; then \
+			echo "ERROR: Failed to download nlohmann/json. Please install system package: sudo apt install nlohmann-json3-dev"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✓ nlohmann/json ready at $(JSON_INCLUDE)/json.hpp"
+else
+	@echo "✓ Using system nlohmann/json"
+endif
+
+$(BUILD_DIR)/$(CLIENT_TARGET): $(CLIENT_SRC) deps
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building client..."
+	@echo "Compile flags: $(CXXFLAGS)"
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+	@echo "✓ Client built successfully: $(BUILD_DIR)/$(CLIENT_TARGET)"
+
+clean:
+	@echo "Cleaning build directory..."
+	rm -rf $(BUILD_DIR) third_party/
+	@echo "✓ Clean completed"
+
+install: $(BUILD_DIR)/$(CLIENT_TARGET)
+	install -D -m 755 $(BUILD_DIR)/$(CLIENT_TARGET) $(DESTDIR)/usr/bin/$(CLIENT_TARGET)
+
+debug: CXXFLAGS += -g -O0 -DDEBUG
+debug: check-deps deps $(BUILD_DIR)/$(CLIENT_TARGET)
+
+test: $(BUILD_DIR)/$(CLIENT_TARGET)
+	@echo "Testing client binary..."
+	@if [ -f $(BUILD_DIR)/$(CLIENT_TARGET) ]; then \
+		echo "✓ Binary exists: $(BUILD_DIR)/$(CLIENT_TARGET)"; \
+		ls -la $(BUILD_DIR)/$(CLIENT_TARGET); \
+	else \
+		echo "✗ Binary not found: $(BUILD_DIR)/$(CLIENT_TARGET)"; \
+		exit 1; \
+	fi
+
+.PHONY: package
+package: $(BUILD_DIR)/$(CLIENT_TARGET)
+	@echo "Building client package..."
+	@mkdir -p pkg/output
+	@chmod +x pkg/deb-slnatc/build-client.sh
+	./pkg/deb-slnatc/build-client.sh

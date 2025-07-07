@@ -39,3 +39,12 @@
 
 # debug information files
 *.dwo
+
+# Build directory
+build/
+
+# Downloaded dependencies
+third_party/
+
+# Package output
+pkg/output/

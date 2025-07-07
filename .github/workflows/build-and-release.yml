@@ -1,0 +1,256 @@
+name: Build and Release SlickNat
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            # Extract version from tag (remove 'v' prefix if present)
+            VERSION=${GITHUB_REF#refs/tags/v}
+            VERSION=${VERSION#refs/tags/}  # Also handle tags without 'v' prefix
+          else
+            # For non-tagged builds, get latest release version
+            LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.tag_name // empty')
+            if [ -n "$LATEST_RELEASE" ]; then
+              # Remove 'v' prefix if present and use latest release version
+              VERSION=${LATEST_RELEASE#v}
+              echo "Using latest release version: $VERSION"
+            else
+              # Only use 1.0.0 if no releases exist at all
+              VERSION="1.0.0"
+              echo "No releases found, using default version: $VERSION"
+            fi
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "client_deb_filename=slick-nat-client-${VERSION}_amd64.deb" >> $GITHUB_OUTPUT
+          echo "daemon_deb_filename=slick-nat-daemon-${VERSION}_amd64.deb" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config libssl-dev
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Update version in build scripts
+        run: |
+          # Update version in client build script
+          sed -i 's/VERSION="[^"]*"/VERSION="${{ steps.version.outputs.version }}"/' pkg/deb-slnatc/build-client.sh
+          
+          # Update version in daemon build script
+          sed -i 's/VERSION="[^"]*"/VERSION="${{ steps.version.outputs.version }}"/' pkg/deb-slnatcd/build-daemon.sh
+
+      - name: Build client package
+        run: |
+          echo "Building SlickNat client package..."
+          cd pkg/deb-slnatc
+          chmod +x build-client.sh
+          ./build-client.sh
+          
+          # Move package to workspace root with versioned name
+          mv ../../pkg/output/slick-nat-client.deb ../../${{ steps.version.outputs.client_deb_filename }}
+
+      - name: Build daemon package
+        run: |
+          echo "Building SlickNat daemon package..."
+          cd pkg/deb-slnatcd
+          chmod +x build-daemon.sh
+          ./build-daemon.sh
+          
+          # Move package to workspace root with versioned name
+          mv ../../pkg/output/slick-nat-daemon.deb ../../${{ steps.version.outputs.daemon_deb_filename }}
+
+      - name: Verify packages
+        run: |
+          echo "Verifying client package..."
+          dpkg-deb --info ${{ steps.version.outputs.client_deb_filename }}
+          dpkg-deb --contents ${{ steps.version.outputs.client_deb_filename }}
+          
+          echo "Verifying daemon package..."
+          dpkg-deb --info ${{ steps.version.outputs.daemon_deb_filename }}
+          dpkg-deb --contents ${{ steps.version.outputs.daemon_deb_filename }}
+
+      - name: Generate checksums
+        run: |
+          sha256sum ${{ steps.version.outputs.client_deb_filename }} > ${{ steps.version.outputs.client_deb_filename }}.sha256
+          sha256sum ${{ steps.version.outputs.daemon_deb_filename }} > ${{ steps.version.outputs.daemon_deb_filename }}.sha256
+          md5sum ${{ steps.version.outputs.client_deb_filename }} > ${{ steps.version.outputs.client_deb_filename }}.md5
+          md5sum ${{ steps.version.outputs.daemon_deb_filename }} > ${{ steps.version.outputs.daemon_deb_filename }}.md5
+
+      - name: Get latest release
+        id: latest_release
+        uses: actions/github-script@v6
+        continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            if (releases.length === 0) {
+              core.setOutput('has_release', 'false');
+              console.log('No releases found - skipping release upload');
+              return;
+            }
+            
+            const latestRelease = releases[0];
+            core.setOutput('has_release', 'true');
+            core.setOutput('release_id', latestRelease.id);
+            core.setOutput('release_tag', latestRelease.tag_name);
+
+      - name: Check if assets exist
+        id: check_assets
+        if: steps.latest_release.outputs.has_release == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const releaseId = ${{ steps.latest_release.outputs.release_id }};
+            
+            const { data: assets } = await github.rest.repos.listReleaseAssets({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId
+            });
+            
+            const assetNames = [
+              '${{ steps.version.outputs.client_deb_filename }}',
+              '${{ steps.version.outputs.daemon_deb_filename }}',
+              '${{ steps.version.outputs.client_deb_filename }}.sha256',
+              '${{ steps.version.outputs.daemon_deb_filename }}.sha256',
+              '${{ steps.version.outputs.client_deb_filename }}.md5',
+              '${{ steps.version.outputs.daemon_deb_filename }}.md5'
+            ];
+            
+            const existingAssets = {};
+            for (const asset of assets) {
+              if (assetNames.includes(asset.name)) {
+                existingAssets[asset.name] = asset.id;
+              }
+            }
+            
+            core.setOutput('existing_assets', JSON.stringify(existingAssets));
+
+      - name: Delete existing assets if they exist
+        if: steps.latest_release.outputs.has_release == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const existingAssets = JSON.parse('${{ steps.check_assets.outputs.existing_assets }}');
+            
+            for (const [assetName, assetId] of Object.entries(existingAssets)) {
+              console.log(`Deleting existing asset: ${assetName}`);
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: parseInt(assetId)
+              });
+            }
+
+      - name: Upload assets to release
+        if: steps.latest_release.outputs.has_release == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const releaseId = '${{ steps.latest_release.outputs.release_id }}';
+            
+            const assets = [
+              { path: './${{ steps.version.outputs.client_deb_filename }}', name: '${{ steps.version.outputs.client_deb_filename }}', contentType: 'application/vnd.debian.binary-package' },
+              { path: './${{ steps.version.outputs.daemon_deb_filename }}', name: '${{ steps.version.outputs.daemon_deb_filename }}', contentType: 'application/vnd.debian.binary-package' },
+              { path: './${{ steps.version.outputs.client_deb_filename }}.sha256', name: '${{ steps.version.outputs.client_deb_filename }}.sha256', contentType: 'text/plain' },
+              { path: './${{ steps.version.outputs.daemon_deb_filename }}.sha256', name: '${{ steps.version.outputs.daemon_deb_filename }}.sha256', contentType: 'text/plain' },
+              { path: './${{ steps.version.outputs.client_deb_filename }}.md5', name: '${{ steps.version.outputs.client_deb_filename }}.md5', contentType: 'text/plain' },
+              { path: './${{ steps.version.outputs.daemon_deb_filename }}.md5', name: '${{ steps.version.outputs.daemon_deb_filename }}.md5', contentType: 'text/plain' }
+            ];
+            
+            for (const asset of assets) {
+              console.log(`Uploading ${asset.name}...`);
+              const data = fs.readFileSync(asset.path);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: parseInt(releaseId),
+                name: asset.name,
+                data: data
+              });
+            }
+
+      - name: Upload artifacts (no release)
+        if: steps.latest_release.outputs.has_release == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: slick-nat-build-${{ steps.version.outputs.version }}
+          path: |
+            ${{ steps.version.outputs.client_deb_filename }}
+            ${{ steps.version.outputs.daemon_deb_filename }}
+            *.sha256
+            *.md5
+          retention-days: 30
+
+      - name: Create release summary
+        run: |
+          echo "## SlickNat Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Client Package**: ${{ steps.version.outputs.client_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Daemon Package**: ${{ steps.version.outputs.daemon_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture**: amd64" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Client Package Contents" >> $GITHUB_STEP_SUMMARY
+          echo "- Binary: /usr/local/bin/slnatc" >> $GITHUB_STEP_SUMMARY
+          echo "- Documentation: /usr/share/doc/slick-nat-client/" >> $GITHUB_STEP_SUMMARY
+          echo "- Man page: /usr/share/man/man1/slnatc.1" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Daemon Package Contents" >> $GITHUB_STEP_SUMMARY
+          echo "- Binary: /usr/sbin/slick-nat-daemon" >> $GITHUB_STEP_SUMMARY
+          echo "- Service: /lib/systemd/system/slnatcd.service" >> $GITHUB_STEP_SUMMARY
+          echo "- Config: /etc/slnatd/config" >> $GITHUB_STEP_SUMMARY
+          echo "- Documentation: /usr/share/doc/slick-nat-daemon/" >> $GITHUB_STEP_SUMMARY
+          echo "- Man page: /usr/share/man/man8/slick-nat-daemon.8" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Download packages" >> $GITHUB_STEP_SUMMARY
+          echo "wget https://github.com/${{ github.repository }}/releases/download/\$TAG/${{ steps.version.outputs.client_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "wget https://github.com/${{ github.repository }}/releases/download/\$TAG/${{ steps.version.outputs.daemon_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Install packages" >> $GITHUB_STEP_SUMMARY
+          echo "sudo dpkg -i ${{ steps.version.outputs.client_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "sudo dpkg -i ${{ steps.version.outputs.daemon_deb_filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "sudo apt-get install -f  # Fix any dependency issues" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Configure and start daemon" >> $GITHUB_STEP_SUMMARY
+          echo "sudo nano /etc/slnatd/config" >> $GITHUB_STEP_SUMMARY
+          echo "sudo systemctl start slnatcd" >> $GITHUB_STEP_SUMMARY
+          echo "sudo systemctl enable slnatcd" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Test client" >> $GITHUB_STEP_SUMMARY
+          echo "slnatc --help" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

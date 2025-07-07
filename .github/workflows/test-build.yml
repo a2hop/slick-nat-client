@@ -1,0 +1,56 @@
+name: Test Build
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential dpkg-dev fakeroot pkg-config libssl-dev
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Test client build
+        run: |
+          echo "Testing SlickNat client build..."
+          cd pkg/deb-slnatc
+          chmod +x build-client.sh
+          ./build-client.sh
+
+      - name: Test daemon build
+        run: |
+          echo "Testing SlickNat daemon build..."
+          cd pkg/deb-slnatcd
+          chmod +x build-daemon.sh
+          ./build-daemon.sh
+
+      - name: Verify packages
+        run: |
+          echo "Verifying client package..."
+          dpkg-deb --info pkg/output/slick-nat-client.deb
+          
+          echo "Verifying daemon package..."
+          dpkg-deb --info pkg/output/slick-nat-daemon.deb
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-packages
+          path: |
+            pkg/output/*.deb
+          retention-days: 7

@@ -25,8 +25,10 @@ print_error() {
 
 # Default values
 BUILD_TYPE="Release"
+BUILD_TARGET="both"
 CLEAN=false
 INSTALL=false
+PACKAGE=false
 PARALLEL_JOBS=$(nproc)
 
 # Parse command line arguments
@@ -44,9 +46,29 @@ while [[ $# -gt 0 ]]; do
             INSTALL=true
             shift
             ;;
+        -p|--package)
+            PACKAGE=true
+            shift
+            ;;
         -j|--jobs)
             PARALLEL_JOBS="$2"
             shift
+            shift
+            ;;
+        --client)
+            BUILD_TARGET="client"
+            shift
+            ;;
+        --daemon)
+            BUILD_TARGET="daemon"
+            shift
+            ;;
+        --cmake)
+            BUILD_TARGET="cmake"
+            shift
+            ;;
+        --test)
+            BUILD_TARGET="test"
             shift
             ;;
         -h|--help)
@@ -56,14 +78,20 @@ while [[ $# -gt 0 ]]; do
             echo "  -d, --debug      Build in debug mode"
             echo "  -c, --clean      Clean build directory before building"
             echo "  -i, --install    Install binaries after building"
+            echo "  -p, --package    Create Debian packages"
             echo "  -j, --jobs N     Use N parallel jobs (default: $(nproc))"
+            echo "  --client         Build only client"
+            echo "  --daemon         Build only daemon"
+            echo "  --cmake          Use CMake build system"
+            echo "  --test           Build and test binaries"
             echo "  -h, --help       Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Build in release mode"
-            echo "  $0 -d                 # Build in debug mode"
-            echo "  $0 -c -i              # Clean build and install"
-            echo "  $0 -j 4               # Use 4 parallel jobs"
+            echo "  $0                    # Build both client and daemon"
+            echo "  $0 -d --client        # Build client in debug mode"
+            echo "  $0 -c -p              # Clean build and create packages"
+            echo "  $0 --cmake            # Use CMake build system"
+            echo "  $0 --test             # Build and test"
             exit 0
             ;;
         *)
@@ -75,99 +103,194 @@ done
 
 print_info "Building SlickNat Agent..."
 print_info "Build type: $BUILD_TYPE"
+print_info "Build target: $BUILD_TARGET"
 print_info "Parallel jobs: $PARALLEL_JOBS"
 
-# Check if we're in the right directory
-if [ ! -f "CMakeLists.txt" ]; then
-    print_error "CMakeLists.txt not found. Please run this script from the slnat-agent directory."
+# Check if we have build files
+if [ ! -f "Makefile.client" ] && [ ! -f "src/CMakeLists.txt" ]; then
+    print_error "No build files found. Please run this script from the project root."
     exit 1
 fi
 
-# Create build directory
-BUILD_DIR="build"
-
-if [ "$CLEAN" = true ] && [ -d "$BUILD_DIR" ]; then
+# Clean if requested
+if [ "$CLEAN" = true ]; then
     print_info "Cleaning build directory..."
-    rm -rf "$BUILD_DIR"
+    rm -rf build third_party
 fi
 
-if [ ! -d "$BUILD_DIR" ]; then
-    print_info "Creating build directory..."
-    mkdir -p "$BUILD_DIR"
-fi
-
-cd "$BUILD_DIR"
-
-# Check for required dependencies
-print_info "Checking dependencies..."
-
-# Check for CMake
-if ! command -v cmake &> /dev/null; then
-    print_error "CMake not found. Please install CMake 3.10 or later."
-    exit 1
-fi
-
-# Check for C++ compiler
-if ! command -v g++ &> /dev/null && ! command -v clang++ &> /dev/null; then
-    print_error "C++ compiler not found. Please install g++ or clang++."
-    exit 1
-fi
-
-# Run CMake configuration
-print_info "Configuring project..."
-cmake -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-      ..
-
-if [ $? -ne 0 ]; then
-    print_error "CMake configuration failed"
-    exit 1
-fi
-
-# Build the project
-print_info "Building project with $PARALLEL_JOBS parallel jobs..."
-make -j"$PARALLEL_JOBS"
-
-if [ $? -ne 0 ]; then
-    print_error "Build failed"
-    exit 1
+# Choose build system
+if [ "$BUILD_TARGET" = "cmake" ]; then
+    # Use CMake build system
+    print_info "Using CMake build system..."
+    
+    if [ ! -f "CMakeLists.txt" ]; then
+        print_error "CMakeLists.txt not found in project root."
+        exit 1
+    fi
+    
+    mkdir -p build
+    cd build
+    
+    CMAKE_BUILD_TYPE="Release"
+    if [ "$BUILD_TYPE" = "Debug" ]; then
+        CMAKE_BUILD_TYPE="Debug"
+    fi
+    
+    cmake -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          ..
+    
+    make -j"$PARALLEL_JOBS"
+    cd ..
+    
+else
+    # Use Makefile build system
+    print_info "Using Makefile build system..."
+    
+    if [ ! -f "Makefile.client" ] || [ ! -f "Makefile.clientd" ]; then
+        print_error "Required makefiles not found in project root."
+        exit 1
+    fi
+    
+    MAKE_TARGET=""
+    if [ "$BUILD_TYPE" = "Debug" ]; then
+        MAKE_TARGET="debug"
+    fi
+    
+    case $BUILD_TARGET in
+        "client")
+            print_info "Building client..."
+            make -f Makefile.client $MAKE_TARGET -j"$PARALLEL_JOBS"
+            ;;
+        "daemon")
+            print_info "Building daemon..."
+            make -f Makefile.clientd $MAKE_TARGET -j"$PARALLEL_JOBS"
+            ;;
+        "test")
+            print_info "Building and testing..."
+            make -f Makefile.client $MAKE_TARGET -j"$PARALLEL_JOBS"
+            make -f Makefile.client test
+            make -f Makefile.clientd $MAKE_TARGET -j"$PARALLEL_JOBS"
+            make -f Makefile.clientd test
+            ;;
+        "both")
+            print_info "Building client..."
+            make -f Makefile.client $MAKE_TARGET -j"$PARALLEL_JOBS"
+            print_info "Building daemon..."
+            make -f Makefile.clientd $MAKE_TARGET -j"$PARALLEL_JOBS"
+            ;;
+    esac
 fi
 
 print_info "Build completed successfully!"
 
 # Show built binaries
-print_info "Built binaries:"
-ls -la slick-nat-daemon slnatc 2>/dev/null || true
+if [ -d "build" ]; then
+    print_info "Built binaries:"
+    ls -la build/ 2>/dev/null || true
+    
+    # Test binaries exist
+    if [ -f "build/slnatc" ]; then
+        print_info "✓ Client binary: build/slnatc"
+    else
+        print_warning "✗ Client binary not found: build/slnatc"
+    fi
+    
+    if [ -f "build/slick-nat-daemon" ]; then
+        print_info "✓ Daemon binary: build/slick-nat-daemon"
+    else
+        print_warning "✗ Daemon binary not found: build/slick-nat-daemon"
+    fi
+else
+    print_warning "Build directory not found"
+fi
 
 # Install if requested
 if [ "$INSTALL" = true ]; then
     print_info "Installing binaries..."
     
-    # Check if we need sudo
-    if [ ! -w "/usr/local/bin" ]; then
-        print_warning "Need sudo privileges to install to /usr/local/bin"
-        sudo make install
-    else
-        make install
-    fi
+    case $BUILD_TARGET in
+        "client")
+            sudo make -f Makefile.client install
+            ;;
+        "daemon")
+            sudo make -f Makefile.clientd install
+            ;;
+        "both"|"cmake"|"test")
+            if [ "$BUILD_TARGET" = "cmake" ]; then
+                cd build && sudo make install && cd ..
+            else
+                sudo make -f Makefile.client install
+                sudo make -f Makefile.clientd install
+            fi
+            ;;
+    esac
     
-    if [ $? -eq 0 ]; then
-        print_info "Installation completed successfully!"
-    else
-        print_error "Installation failed"
-        exit 1
-    fi
+    print_info "Installation completed successfully!"
 fi
 
-# Go back to original directory
-cd ..
+# Create packages if requested
+if [ "$PACKAGE" = true ]; then
+    print_info "Creating Debian packages..."
+    if [ ! -f "pkg/deb/build-packages.sh" ]; then
+        print_error "Package build script not found"
+        exit 1
+    fi
+    chmod +x pkg/deb/build-packages.sh
+    ./pkg/deb/build-packages.sh
+    print_info "Packages created in pkg/output/"
+    
+    # Re-check binaries after package building (they might be built as part of packaging)
+    print_info ""
+    print_info "Final binary status:"
+    if [ -f "build/slnatc" ]; then
+        print_info "✓ Client binary: build/slnatc"
+    else
+        print_warning "✗ Client binary not found: build/slnatc"
+    fi
+    
+    if [ -f "build/slick-nat-daemon" ]; then
+        print_info "✓ Daemon binary: build/slick-nat-daemon"
+    else
+        print_warning "✗ Daemon binary not found: build/slick-nat-daemon"
+    fi
+fi
 
 print_info "Build script completed!"
 print_info ""
 print_info "Usage:"
-print_info "  Daemon: ./build/slick-nat-daemon --address 7000::1"
-print_info "  Client: ./build/slnatc 7000 get2kip"
+if [ -f "build/slnatc" ]; then
+    print_info "  Client: ./build/slnatc ::1 ping"
+else
+    print_warning "  Client not built"
+fi
+if [ -f "build/slick-nat-daemon" ]; then
+    print_info "  Daemon: ./build/slick-nat-daemon --config /etc/slnatd/config"
+else
+    print_warning "  Daemon not built"
+fi
 print_info ""
 print_info "For help:"
-print_info "  ./build/slick-nat-daemon --help"
-print_info "  ./build/slnatc 7000 --help"
+if [ -f "build/slnatc" ]; then
+    print_info "  ./build/slnatc ::1 ping (test connectivity)"
+    print_info "  ./build/slnatc --help (show usage)"
+else
+    print_info "  ./build/slnatc --help (if available)"
+fi
+if [ -f "build/slick-nat-daemon" ]; then
+    print_info "  ./build/slick-nat-daemon --help (show usage)"
+else
+    print_info "  ./build/slick-nat-daemon --help (if available)"
+fi
+
+# Show package information if packages were built
+if [ "$PACKAGE" = true ] && [ -d "pkg/output" ]; then
+    print_info ""
+    print_info "Packages built:"
+    ls -la pkg/output/ 2>/dev/null || true
+    print_info ""
+    print_info "To install packages:"
+    print_info "  sudo dpkg -i pkg/output/slick-nat-client.deb"
+    print_info "  sudo dpkg -i pkg/output/slick-nat-daemon.deb"
+    print_info "  Or: sudo dpkg -i pkg/output/slick-nat-*.deb"
+fi

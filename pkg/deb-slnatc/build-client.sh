@@ -6,7 +6,7 @@ set -e
 VERSION="1.0.0"
 BUILD_DIR="/tmp/slick-nat-client-build"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "Building SlickNat Client package..."
 echo "Project root: $PROJECT_ROOT"
@@ -20,7 +20,9 @@ mkdir -p "$BUILD_DIR"
 echo "Building client binary..."
 cd "$PROJECT_ROOT"
 
-g++ -std=c++17 -O2 -o slnatc slnat-agent/net-client/slnatc.cpp -lnlohmann_json
+# Use the client makefile
+make -f Makefile.client clean
+make -f Makefile.client
 
 # Build client package
 echo "Building client package..."
@@ -31,10 +33,10 @@ mkdir -p "$CLIENT_PKG_DIR/usr/share/man/man1"
 mkdir -p "$CLIENT_PKG_DIR/usr/share/doc/slick-nat-client"
 
 # Copy client files
-cp slnatc "$CLIENT_PKG_DIR/usr/bin/"
+cp build/slnatc "$CLIENT_PKG_DIR/usr/bin/"
 cp pkg/deb-slnatc/control "$CLIENT_PKG_DIR/DEBIAN/"
 
-# Create man page for client
+# Create man page
 cat > "$CLIENT_PKG_DIR/usr/share/man/man1/slnatc.1" << 'EOF'
 .TH SLNATC 1 "2024" "SlickNat" "User Commands"
 .SH NAME
@@ -64,17 +66,32 @@ slnatc 7000::1 ping
 .BR slick-nat-daemon (8)
 EOF
 
-# Create changelog
-cat > "$CLIENT_PKG_DIR/usr/share/doc/slick-nat-client/changelog.Debian" << EOF
-slick-nat-client (1.0.0) unstable; urgency=low
+# Create documentation
+cat > "$CLIENT_PKG_DIR/usr/share/doc/slick-nat-client/README" << 'EOF'
+SlickNat Client
+===============
 
-  * Initial release of SlickNat client
+This package contains the slnatc command-line client for querying
+SlickNat daemon about IPv6 NAT mappings.
 
- -- SlickNat Team <team@slicknat.org>  $(date -R)
+Usage:
+  slnatc <daemon_address> <command> [options]
+
+Commands:
+  get2kip [ip]  - Get global unicast IP for local/specified IP
+  resolve <ip>  - Resolve IP address mapping
+  ping          - Ping the daemon
+
+Examples:
+  slnatc ::1 ping
+  slnatc 7000::1 get2kip 7000::100
+  slnatc ::1 resolve 2001:db8::1
 EOF
 
+# Copy license
+cp LICENSE "$CLIENT_PKG_DIR/usr/share/doc/slick-nat-client/copyright"
+
 # Compress files
-gzip -9 "$CLIENT_PKG_DIR/usr/share/doc/slick-nat-client/changelog.Debian"
 gzip -9 "$CLIENT_PKG_DIR/usr/share/man/man1/slnatc.1"
 
 # Set permissions

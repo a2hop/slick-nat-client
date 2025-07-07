@@ -1,0 +1,18 @@
+# Create systemd service file
+cat > "$DAEMON_PKG_DIR/lib/systemd/system/slnatcd.service" << 'EOF'
+[Unit]
+Description=SlickNat IPv6 NAT Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/slick-nat-daemon --config /etc/slnatd/config
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
+EOF

@@ -1,0 +1,18 @@
+# Create default config file
+cat > "$DAEMON_PKG_DIR/etc/slnatd/config" << 'EOF'
+# SlickNat Daemon Configuration
+# Listen on multiple IPv6 addresses
+
+# Listen on localhost
+listen ::1 7001
+
+# Listen on all IPv6 addresses (uncomment if needed)
+# listen :: 7001
+
+# Specify additional addresses to listen on
+# listen 2001:db8::1 7001
+# listen fd00::1 7001
+
+# Kernel proc file path
+proc_path /proc/net/slick_nat_mappings
+EOF

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(SlickNatAgent)
+project(SlickNatClient)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,12 +15,12 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 # Daemon executable
 add_executable(slick-nat-daemon
-    net-agent/slnat-daemon.cpp
+    ../src-clientd/slnat-daemon.cpp
 )
 
 # Network client executable
 add_executable(slnatc
-    net-client/slnatc.cpp
+    ../src-client/slnatc.cpp
 )
 
 # Link libraries
@@ -42,6 +42,9 @@ else()
 endif()
 
 # Install targets
-install(TARGETS slick-nat-daemon slnatc
+install(TARGETS slick-nat-daemon 
+    RUNTIME DESTINATION sbin
+)
+install(TARGETS slnatc
     RUNTIME DESTINATION bin
 )
