@@ -1,5 +1,3 @@
-# Create systemd service file
-cat > "$DAEMON_PKG_DIR/lib/systemd/system/slnatcd.service" << 'EOF'
 [Unit]
 Description=SlickNat IPv6 NAT Daemon
 After=network.target
@@ -15,4 +13,3 @@ Group=root
 
 [Install]
 WantedBy=multi-user.target
-EOF

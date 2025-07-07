@@ -1,5 +1,3 @@
-# Create man page for client
-cat > "$CLIENT_PKG_DIR/usr/share/man/man1/slnatc.1" << 'EOF'
 .TH SLNATC 1 "2024" "SlickNat" "User Commands"
 .SH NAME
 slnatc \- SlickNat client utility
@@ -9,6 +7,10 @@ slnatc \- SlickNat client utility
 .RI [ options ]
 .SH DESCRIPTION
 Query SlickNat daemon for IPv6 NAT mapping information.
+.SH ARGUMENTS
+.TP
+.B daemon_address
+IPv6 address of the SlickNat daemon to connect to
 .SH COMMANDS
 .TP
 .B get2kip [ip]
@@ -26,4 +28,3 @@ slnatc ::1 get2kip 7607:af56:abb1:c7::100
 slnatc 7000::1 ping
 .SH SEE ALSO
 .BR slick-nat-daemon (8)
-EOF
